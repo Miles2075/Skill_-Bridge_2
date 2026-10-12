@@ -976,11 +976,11 @@ class DatabaseManager {
 
   private ensureSchemaIntegrity(db: LMSDatabase) {
     let changed = false;
-    if (!db.users || db.users.length === 0) {
+    if (!db.users) {
       db.users = [...INITIAL_USERS];
       changed = true;
     }
-    if (!db.user_roles || db.user_roles.length === 0) {
+    if (!db.user_roles) {
       db.user_roles = [...INITIAL_USER_ROLES];
       changed = true;
     }
@@ -992,7 +992,7 @@ class DatabaseManager {
       db.purchases = [];
       changed = true;
     }
-    if (!db.profiles || db.profiles.length === 0) {
+    if (!db.profiles) {
       db.profiles = [...INITIAL_PROFILES];
       changed = true;
     }
