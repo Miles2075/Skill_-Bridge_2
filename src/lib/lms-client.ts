@@ -1,44 +1,39 @@
 import { supabase } from "@/integrations/supabase/client";
-import { getLocalSession, syncLocalSessionProfile } from "@/lib/local-db";
+import { syncLocalSessionProfile } from "@/lib/local-db";
 
 async function getAuthHeaders(): Promise<HeadersInit> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
 
-  // The LMS uses the local session as its authoritative role/session source.
-  // Prefer it over a stale Supabase browser session so switching between
-  // student and teacher accounts cannot leak the previous role into API calls.
+  // Server routes must derive identity from a session token, not client-supplied
+  // x-user-id / x-user-role headers. The database validates the bearer token.
   try {
-    const localUser = getLocalSession();
-    if (localUser) {
-      headers["x-user-id"] = localUser.id;
-      headers["x-user-email"] = localUser.email;
-      headers["x-user-name"] = localUser.user_metadata?.display_name || "";
-      headers["x-user-role"] = localUser.user_metadata?.role || "student";
+    const localSession = typeof window !== "undefined"
+      ? ["sb-local-auth-token", "sb-csjygxumpnonfupobhih-auth-token", "skillbridge_local_auth_session"]
+          .map((key) => {
+            try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; }
+          })
+          .find((session) => session?.access_token)
+      : null;
+    if (localSession?.access_token) {
+      headers["Authorization"] = `Bearer ${localSession.access_token}`;
       return headers;
     }
   } catch {
-    // Fall through to Supabase if no local session is available.
+    // Fall through to the auth adapter.
   }
 
   try {
     const { data } = await supabase.auth.getSession();
     const session = data?.session;
-    if (session?.access_token) {
-      headers["Authorization"] = `Bearer ${session.access_token}`;
-    }
-    if (session?.user) {
-      headers["x-user-id"] = session.user.id;
-      headers["x-user-email"] = session.user.email || "";
-      headers["x-user-name"] =
-        (session.user.user_metadata?.display_name as string) || "";
-      headers["x-user-role"] =
-        (session.user.user_metadata?.role as string) || "student";
-    }
+    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
   } catch {
-    // No browser Supabase session available.
+    // No browser auth session available.
   }
+
+  // Legacy local demo sessions have no signed server token. Do not send identity
+  // headers as if they were authentication credentials.
 
   return headers;
 }
