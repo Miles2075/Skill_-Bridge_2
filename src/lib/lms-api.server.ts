@@ -127,6 +127,10 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
   }
 
   try {
+  // The API is a server-side boundary: never trust client-supplied role headers.
+  // Signed internal sessions from the LMS store are resolved by parseUserContext;
+  // external JWT payloads are accepted only when an explicit trusted auth adapter
+  // has verified them before forwarding user headers.
     // AUTH: POST /api/lms/auth/login
     if (path === "auth/login" && method === "POST") {
       const body = await req.json();
@@ -684,6 +688,85 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
         user.email || body.studentEmail || "student@example.com",
       );
       return jsonResponse({ enrollment });
+    }
+
+    // POST /api/lms/purchase-confirmed
+    // Used after client payment UI completes. This route independently fetches the
+    // Razorpay order and payment and validates the signature, amount, course, and
+    // authenticated owner before granting access.
+    if (path === "purchase-confirmed" && method === "POST") {
+      if (!user.userId) return errorResponse("Sign in before purchasing a course.", 401);
+      const body = await req.json().catch(() => ({}));
+      const courseId = typeof body.courseId === "string" ? body.courseId : "";
+      const orderId = typeof body.orderId === "string" ? body.orderId : "";
+      const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
+      const signature = typeof body.signature === "string" ? body.signature : "";
+      if (!courseId || !orderId || !paymentId || !signature) {
+        return errorResponse("Course and payment details are required.");
+      }
+
+      const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+      const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+      if (!keyId || !keySecret) return errorResponse("Payments are not configured.", 503);
+      const course = lmsDB.getCourse(courseId);
+      if (!course) return errorResponse("Course not found.", 404);
+
+      const crypto = await import("crypto");
+      const expected = crypto.createHmac("sha256", keySecret).update(`${orderId}|${paymentId}`).digest("hex");
+      const a = Buffer.from(expected, "utf8");
+      const b = Buffer.from(signature, "utf8");
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return errorResponse("Payment signature verification failed.", 400);
+      }
+
+      const basic = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+      const [orderResponse, paymentResponse] = await Promise.all([
+        fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(orderId)}`, {
+          headers: { Authorization: `Basic ${basic}` },
+        }),
+        fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+          headers: { Authorization: `Basic ${basic}` },
+        }),
+      ]);
+      if (!orderResponse.ok || !paymentResponse.ok) {
+        return errorResponse("Could not verify payment with Razorpay.", 502);
+      }
+      const order = await orderResponse.json() as { id?: string; amount?: number; currency?: string; notes?: { course_id?: string } };
+      const payment = await paymentResponse.json() as { id?: string; order_id?: string; amount?: number; currency?: string; status?: string };
+      if (order.id !== orderId || payment.id !== paymentId || payment.order_id !== orderId) {
+        return errorResponse("Payment identifiers do not match.", 400);
+      }
+      if (order.amount !== course.price_inr * 100 || payment.amount !== order.amount ||
+          order.currency !== "INR" || payment.currency !== "INR") {
+        return errorResponse("Paid amount does not match this course.", 400);
+      }
+      if (order.notes?.course_id !== course.id && order.notes?.course_id !== course.slug) {
+        return errorResponse("Payment was not created for this course.", 400);
+      }
+      if (payment.status !== "captured") {
+        return errorResponse("Payment has not been captured.", 402);
+      }
+
+      const purchaseResult = lmsDB.queryTable("purchases", {
+        action: "upsert",
+        onConflict: "razorpay_payment_id",
+        values: {
+          id: `purchase_${paymentId}`,
+          user_id: user.userId,
+          course_id: course.id,
+          amount_inr: course.price_inr,
+          razorpay_order_id: orderId,
+          razorpay_payment_id: paymentId,
+        },
+      });
+      const enrollment = lmsDB.enrollStudent(
+        user.userId,
+        course.id,
+        user.name || "Learner",
+        user.email || "",
+      );
+      await lmsDB.flush();
+      return jsonResponse({ ok: true, purchase: purchaseResult.data, enrollment });
     }
 
     // POST /api/lms/complete-lesson
