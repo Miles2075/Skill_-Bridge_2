@@ -566,103 +566,78 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
       return jsonResponse({ roles });
     }
 
-    // GENERIC QUERY: POST /api/lms/query
-    // This compatibility endpoint is used by the local Supabase adapter. Keep it
-    // narrowly allow-listed: browser input must never select arbitrary database
-    // tables or mutate another learner's records.
+    // GENERIC QUERY compatibility adapter. Only allow tables and actions that
+    // callers actually need, and always scope private records to the current user.
     if (path === "query" && method === "POST") {
       const body = await req.json();
       const table = typeof body.table === "string" ? body.table : "";
       const action = body.action;
-      const filters =
-        body.filters && typeof body.filters === "object" && !Array.isArray(body.filters)
-          ? { ...body.filters }
-          : undefined;
-      const values = body.values;
-
-      const protectedTables = new Set([
-        "users", "user_roles", "sessions", "profiles", "purchases",
-        "enrollments", "lesson_progress", "submissions", "quiz_attempts", "certificates",
-      ]);
-      const writableTables = new Set(["profiles", "lesson_progress"]);
-      const teacherWritableTables = new Set(["courses", "lessons", "assignments", "quizzes"]);
-      const tableExists = new Set([
-        "courses", "lessons", "enrollments", "lesson_progress", "assignments",
-        "submissions", "quizzes", "quiz_attempts", "certificates", "users",
-        "user_roles", "sessions", "purchases", "profiles",
-      ]);
-
-      if (!tableExists.has(table)) return errorResponse("Table not allowed", 400);
       if (!["select", "insert", "upsert", "update", "delete"].includes(action)) {
         return errorResponse("Unsupported table action", 400);
       }
 
+      const allowedTables = new Set([
+        "courses", "lessons", "enrollments", "lesson_progress", "assignments",
+        "submissions", "quizzes", "quiz_attempts", "certificates", "users",
+        "user_roles", "sessions", "purchases", "profiles",
+      ]);
+      if (!allowedTables.has(table)) return errorResponse("Table not allowed", 400);
+
+      const ownerColumnByTable: Record<string, string> = {
+        enrollments: "student_id",
+        lesson_progress: "student_id",
+        submissions: "student_id",
+        quiz_attempts: "student_id",
+        certificates: "student_id",
+        purchases: "user_id",
+        profiles: "id",
+        users: "id",
+        sessions: "user_id",
+        user_roles: "user_id",
+      };
+      const privateTable = Object.hasOwn(ownerColumnByTable, table);
+      if (privateTable && !user.userId) return errorResponse("Unauthorized", 401);
       const isWrite = action !== "select";
       if (isWrite && !user.userId) return errorResponse("Unauthorized", 401);
 
-      if (protectedTables.has(table) && !user.userId) {
+      // Generic table APIs never mutate auth, role, purchase, enrollment, or
+      // teacher-owned course data. Those writes must go through typed endpoints.
+      const directWriteTables = new Set(["profiles", "lesson_progress"]);
+      if (isWrite && !directWriteTables.has(table)) {
+        return errorResponse("Use the dedicated API endpoint for this operation", 403);
+      }
+      if (isWrite && table === "lesson_progress" && !user.userId) {
         return errorResponse("Unauthorized", 401);
       }
 
-      if (protectedTables.has(table) && filters) {
-        // Scope student-owned records to the active account. Ignore client attempts
-        // to request a different student ID.
-        if (["enrollments", "lesson_progress", "submissions", "quiz_attempts", "certificates", "purchases"].includes(table)) {
-          filters["student_id"] = user.userId;
-          if (table === "purchases") {
-            delete filters["student_id"];
-            filters["user_id"] = user.userId;
-          }
-          if (table === "enrollments" || table === "lesson_progress" || table === "submissions" || table === "quiz_attempts" || table === "certificates" || table === "purchases") {
-            // protected owner filter is applied below even if the caller omitted it.
-          }
-        } else if (table === "profiles" || table === "users" || table === "sessions") {
-          filters["id"] = user.userId;
-        } else if (table === "user_roles") {
-          filters["user_id"] = user.userId;
-        }
+      const filters =
+        body.filters && typeof body.filters === "object" && !Array.isArray(body.filters)
+          ? { ...(body.filters as Record<string, unknown>) }
+          : undefined;
+      const scopedFilters: Record<string, unknown> = filters || {};
+      if (privateTable && user.userId) {
+        scopedFilters[ownerColumnByTable[table]!] = user.userId;
       }
 
-      if (protectedTables.has(table) && !filters && action === "select") {
-        if (["enrollments", "lesson_progress", "submissions", "quiz_attempts", "certificates"].includes(table)) {
-          filters && (filters["student_id"] = user.userId);
-        }
-      }
-
-      if (isWrite && !user.isTeacher && !writableTables.has(table)) {
-        return errorResponse("Forbidden: insufficient role for this operation", 403);
-      }
-      if (isWrite && user.isTeacher && teacherWritableTables.has(table) && !user.isAdmin) {
-        // Resource-specific API routes perform course ownership checks. Generic table
-        // writes are denied so a teacher cannot edit another teacher's resources.
-        return errorResponse("Use the course management API for teacher writes", 403);
-      }
-      if (["users", "user_roles", "sessions", "purchases", "enrollments", "submissions", "quiz_attempts", "certificates"].includes(table) && isWrite) {
-        return errorResponse("Use a dedicated API endpoint for this table", 403);
-      }
-
-      if (table === "profiles" && isWrite && values && typeof values === "object") {
-        const candidate = Array.isArray(values) ? values : [values];
-        for (const row of candidate) {
-          if (!row || typeof row !== "object") return errorResponse("Invalid profile payload", 400);
+      const values = body.values;
+      if (isWrite && (table === "profiles" || table === "lesson_progress") && values !== undefined) {
+        const rows = Array.isArray(values) ? values : [values];
+        for (const row of rows) {
+          if (!row || typeof row !== "object") return errorResponse("Invalid payload", 400);
           const record = row as Record<string, unknown>;
-          if (record["id"] && record["id"] !== user.userId) {
-            return errorResponse("You can only modify your own profile", 403);
+          const ownerColumn = table === "profiles" ? "id" : "student_id";
+          if (record[ownerColumn] !== undefined && record[ownerColumn] !== user.userId) {
+            return errorResponse("You can only modify your own records", 403);
           }
-        }
-      }
-      if (table === "lesson_progress" && isWrite && values && typeof values === "object") {
-        const candidate = Array.isArray(values) ? values : [values];
-        for (const row of candidate) {
-          if (!row || typeof row !== "object") return errorResponse("Invalid progress payload", 400);
-          const record = row as Record<string, unknown>;
-          if (record["student_id"] && record["student_id"] !== user.userId) {
-            return errorResponse("You can only modify your own progress", 403);
-          }
+          if (table === "lesson_progress") record["student_id"] = user.userId;
+          if (table === "profiles") record["id"] = user.userId;
         }
       }
 
-      const result = lmsDB.queryTable(table, { ...body, table, filters });
+      const result = lmsDB.queryTable(table, {
+        ...body,
+        filters: Object.keys(scopedFilters).length ? scopedFilters : undefined,
+      });
       return jsonResponse(result);
     }
     // GET /api/lms/courses
