@@ -2050,28 +2050,10 @@ class DatabaseManager {
     const db = this.read();
     const cleanEmail = email.trim().toLowerCase();
     const user = this.findUserByEmail(cleanEmail);
-    if (!user) {
-      const role =
-        cleanEmail.includes("teach") ||
-        cleanEmail.includes("instructor") ||
-        cleanEmail.includes("faculty")
-          ? "teacher"
-          : "student";
-      const registered = this.registerUser({
-        email: cleanEmail,
-        password,
-        name: cleanEmail.split("@")[0],
-        role,
-      });
-      return { user: registered.user, session: registered.session, roles: registered.roles };
-    }
+    if (!user) return null;
 
     const hash = hashPassword(password, user.salt);
-    if (hash !== user.password_hash) {
-      user.password_hash = hash;
-      user.updated_at = new Date().toISOString();
-      this.write();
-    }
+    if (hash !== user.password_hash) return null;
 
     const session = this.createSession(user.id);
     const roles = this.getUserRoles(user.id);
