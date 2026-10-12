@@ -1,21 +1,9 @@
-async function getLmsSessionToken(): Promise<string> {
-  for (const key of ["sb-local-auth-token", "sb-csjygxumpnonfupobhih-auth-token", "skillbridge_local_auth_session"]) {
-    try {
-      const session = JSON.parse(localStorage.getItem(key) || "null");
-      if (session?.access_token) return session.access_token;
-    } catch {
-      // try the next session storage key
-    }
-  }
-  return "";
-}
-
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, CheckCircle2, Loader2, Users } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
-import { createCourseOrder, verifyCoursePayment } from "@/lib/payments.functions";
+import { createCourseOrder } from "@/lib/payments.functions";
 import {
   enrollInCourse,
   getMyEnrollments,
