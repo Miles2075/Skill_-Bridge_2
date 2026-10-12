@@ -849,6 +849,10 @@ class DatabaseManager {
 
   async ready(): Promise<void> {
     if (!this.remoteSql) {
+      // Local JSON persistence is intended for development only.
+      if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+        throw new Error("DATABASE_URL is required for production LMS persistence.");
+      }
       this.read();
       return;
     }
