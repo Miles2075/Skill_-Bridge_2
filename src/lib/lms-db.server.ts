@@ -742,7 +742,7 @@ const INITIAL_USERS: LocalUser[] = process.env.NODE_ENV === "production" || proc
     },
   ];
 
-const INITIAL_USER_ROLES: LocalUserRole[] = [
+const INITIAL_USER_ROLES: LocalUserRole[] = process.env.NODE_ENV === "production" || process.env.VERCEL ? [] : [
   {
     id: "ur-1",
     user_id: "00000000-0000-4000-a000-000000000001",
@@ -775,7 +775,7 @@ const INITIAL_USER_ROLES: LocalUserRole[] = [
   },
 ];
 
-const INITIAL_PROFILES: LocalProfile[] = [
+const INITIAL_PROFILES: LocalProfile[] = process.env.NODE_ENV === "production" || process.env.VERCEL ? [] : [
   {
     id: "00000000-0000-4000-a000-000000000001",
     display_name: "Alex Learner",
