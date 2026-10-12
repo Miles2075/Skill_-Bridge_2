@@ -1,8 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { createHmac, timingSafeEqual } from "crypto";
-import fs from "fs";
-import path from "path";
 import { lmsDB } from "./lms-db.server";
 
 const COURSE_CATALOG: Record<string, { title: string; price: number; slug?: string }> = {
@@ -51,41 +49,14 @@ function findCourse(courseId: string) {
 }
 
 function getRazorpayCredentials() {
-  let keyId = process.env["RAZORPAY_KEY_ID"]?.trim() || "";
-  let keySecret = process.env["RAZORPAY_KEY_SECRET"]?.trim() || "";
-
-  // Read .env if keys are missing or swapped in the process environment
-  if (!keyId || !keySecret || (!keyId.startsWith("rzp_") && keySecret.startsWith("rzp_"))) {
-    try {
-      const envPath = path.resolve(process.cwd(), ".env");
-      if (fs.existsSync(envPath)) {
-        const lines = fs.readFileSync(envPath, "utf-8").split("\n");
-        for (const line of lines) {
-          const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-          if (match) {
-            const k = match[1].trim();
-            const v = (match[2] || "").trim().replace(/^['"]|['"]$/g, "");
-            if (k === "RAZORPAY_KEY_ID" && v) keyId = v;
-            if (k === "RAZORPAY_KEY_SECRET" && v) keySecret = v;
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
+  const keyId = process.env["RAZORPAY_KEY_ID"]?.trim() || "";
+  const keySecret = process.env["RAZORPAY_KEY_SECRET"]?.trim() || "";
+  if (!keyId || !keySecret) {
+    throw new Error(
+      "Payments are not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Vercel Environment Variables.",
+    );
   }
-
-  // Fallbacks to default configured keys
-  if (!keyId) keyId = "rzp_test_TkYGjq4iojsimE";
-  if (!keySecret) keySecret = "8Uvqi1Vc1SVW312rqWURPzdw";
-
-  // If credentials were provided swapped in environment, automatically detect and fix
-  if (!keyId.startsWith("rzp_") && keySecret.startsWith("rzp_")) {
-    const temp = keyId;
-    keyId = keySecret;
-    keySecret = temp;
-  }
-
+  if (!keyId.startsWith("rzp_")) throw new Error("RAZORPAY_KEY_ID is invalid.");
   return { keyId, keySecret };
 }
 
@@ -117,7 +88,11 @@ async function razorpayRequest(path: string, init: RequestInit = {}) {
 export const createCourseOrder = createServerFn({ method: "POST" })
   .validator((d) => z.object({ courseId: z.string().min(1).max(100) }).parse(d))
   .handler(async ({ data }) => {
-    const course = findCourse(data.courseId);
+    await lmsDB.ready();
+    const record = lmsDB.getCourse(data.courseId);
+    if (!record) throw new Error("Course not found.");
+    if (record.status !== "published") throw new Error("This course is not available for purchase.");
+    const course = { title: record.title, price: record.price_inr, slug: record.slug };
     const { keyId } = getRazorpayCredentials();
 
     const order = await razorpayRequest("/orders", {
@@ -151,7 +126,10 @@ export const verifyCoursePayment = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data }) => {
-    const course = findCourse(data.courseId);
+    await lmsDB.ready();
+    const record = lmsDB.getCourse(data.courseId);
+    if (!record) throw new Error("Course not found.");
+    const course = { title: record.title, price: record.price_inr, slug: record.slug };
     const { keySecret } = getRazorpayCredentials();
     const expected = createHmac("sha256", keySecret)
       .update(`${data.orderId}|${data.paymentId}`)
@@ -161,7 +139,7 @@ export const verifyCoursePayment = createServerFn({ method: "POST" })
     if (a.length !== b.length || !timingSafeEqual(a, b))
       throw new Error("Payment signature verification failed");
 
-    if (!data.orderId.startsWith("order_test_") && !data.paymentId.startsWith("pay_test_")) {
+    {
       try {
         const [order, payment] = await Promise.all([
           razorpayRequest(`/orders/${encodeURIComponent(data.orderId)}`),
@@ -171,16 +149,17 @@ export const verifyCoursePayment = createServerFn({ method: "POST" })
           throw new Error("Payment order ID does not match");
         }
         const noteId = order.notes?.course_id;
-        const matchesCourse =
-          !noteId ||
-          noteId === data.courseId ||
-          noteId === course.slug ||
-          (course.slug && data.courseId.includes(course.slug));
-        if (!matchesCourse) {
-          console.warn(`Payment course note (${noteId}) vs requested courseId (${data.courseId})`);
+        if (noteId !== data.courseId && noteId !== course.slug) {
+          throw new Error("Payment order does not belong to the selected course.");
         }
-        if (payment.status && payment.status !== "captured" && payment.status !== "authorized") {
-          throw new Error(`Payment is not completed. Current status: ${payment.status}`);
+        if (order.amount !== course.price * 100 || order.currency !== "INR") {
+          throw new Error("Payment amount or currency does not match the course price.");
+        }
+        if (payment.order_id !== data.orderId) {
+          throw new Error("Payment does not belong to the specified order.");
+        }
+        if (payment.status !== "captured") {
+          throw new Error(`Payment is not captured. Current status: ${payment.status || "unknown"}`);
         }
       } catch (err) {
         throw err instanceof Error ? err : new Error("Live payment verification failed");
@@ -190,6 +169,8 @@ export const verifyCoursePayment = createServerFn({ method: "POST" })
     return { ok: true, paymentId: data.paymentId, orderId: data.orderId, amount: course.price };
   });
 
-export const getUserPurchases = createServerFn({ method: "GET" }).handler(
-  async () => [] as string[],
-);
+export const getUserPurchases = createServerFn({ method: "GET" }).handler(async () => {
+  // Purchases are scoped through the auth session on the LMS API. Server functions
+  // should not return a static success response that looks like a real purchase.
+  return [] as string[];
+});
