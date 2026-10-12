@@ -215,7 +215,8 @@ export interface LMSDatabase {
 }
 
 export function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  // 210,000 iterations follows current OWASP guidance for PBKDF2-HMAC-SHA512.
+  return crypto.pbkdf2Sync(password, salt, 210_000, 64, "sha512").toString("hex");
 }
 
 const DB_DIR = path.resolve(process.cwd(), "data");
