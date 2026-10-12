@@ -2099,30 +2099,10 @@ class DatabaseManager {
     if (!token) return null;
     const db = this.read();
 
-    if (token.startsWith("eyJ") && token.split(".").length === 3) {
-      try {
-        const payloadStr = Buffer.from(token.split(".")[1]!, "base64url").toString("utf-8");
-        const payload = JSON.parse(payloadStr);
-        if (payload.sub) {
-          const user = this.findUserById(payload.sub) || this.findUserByEmail(payload.email || "");
-          if (user) {
-            return {
-              user,
-              session: {
-                id: payload.session_id || "sess_jwt",
-                user_id: user.id,
-                token,
-                expires_at: new Date(Date.now() + 86400000).toISOString(),
-                created_at: new Date().toISOString(),
-              },
-              roles: this.getUserRoles(user.id),
-            };
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
+    // External/JWT sessions are only accepted when the signature is verifiable.
+    // In the local LMS session format, opaque random tokens below are the
+    // authoritative production session mechanism.
+
 
     const session = db.sessions.find((s) => s.token === token);
     if (!session) return null;
