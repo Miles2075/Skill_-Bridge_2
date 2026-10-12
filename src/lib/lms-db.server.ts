@@ -665,78 +665,82 @@ const INITIAL_QUIZZES: Quiz[] = [
   },
 ];
 
-const INITIAL_USERS: LocalUser[] = [
-  {
-    id: "00000000-0000-4000-a000-000000000001",
-    email: "student@skillbridge.edu",
-    password_hash: hashPassword("password123", "salt_student_01"),
-    salt: "salt_student_01",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Alex Learner",
-      role: "student",
-      sub: "00000000-0000-4000-a000-000000000001",
+// No shared demo accounts are created in production. Create actual accounts
+// through /api/lms/auth/signup; local demo data is not a safe production identity.
+const INITIAL_USERS: LocalUser[] = process.env.NODE_ENV === "production" || process.env.VERCEL
+  ? []
+  : [
+    {
+      id: "00000000-0000-4000-a000-000000000001",
       email: "student@skillbridge.edu",
+      password_hash: hashPassword("password123", "salt_student_01"),
+      salt: "salt_student_01",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Alex Learner",
+        role: "student",
+        sub: "00000000-0000-4000-a000-000000000001",
+        email: "student@skillbridge.edu",
+      },
     },
-  },
-  {
-    id: "8d95e694-3d47-422e-a017-86a1a0ee1251",
-    email: "instructor@skillbridge.edu",
-    password_hash: hashPassword("password123", "salt_teacher_01"),
-    salt: "salt_teacher_01",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Sarah Chen",
-      role: "teacher",
-      sub: "8d95e694-3d47-422e-a017-86a1a0ee1251",
+    {
+      id: "8d95e694-3d47-422e-a017-86a1a0ee1251",
       email: "instructor@skillbridge.edu",
+      password_hash: hashPassword("password123", "salt_teacher_01"),
+      salt: "salt_teacher_01",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Sarah Chen",
+        role: "teacher",
+        sub: "8d95e694-3d47-422e-a017-86a1a0ee1251",
+        email: "instructor@skillbridge.edu",
+      },
     },
-  },
-  {
-    id: "00000000-0000-4000-a000-000000000003",
-    email: "admin@skillbridge.edu",
-    password_hash: hashPassword("password123", "salt_admin_01"),
-    salt: "salt_admin_01",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Skillbridge Admin",
-      role: "admin",
-      sub: "00000000-0000-4000-a000-000000000003",
+    {
+      id: "00000000-0000-4000-a000-000000000003",
       email: "admin@skillbridge.edu",
+      password_hash: hashPassword("password123", "salt_admin_01"),
+      salt: "salt_admin_01",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Skillbridge Admin",
+        role: "admin",
+        sub: "00000000-0000-4000-a000-000000000003",
+        email: "admin@skillbridge.edu",
+      },
     },
-  },
-  {
-    id: "00000000-0000-4000-a000-000000000004",
-    email: "student@skillbridge.dev",
-    password_hash: hashPassword("password123", "salt_student_dev"),
-    salt: "salt_student_dev",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Alex Learner",
-      role: "student",
-      sub: "00000000-0000-4000-a000-000000000004",
+    {
+      id: "00000000-0000-4000-a000-000000000004",
       email: "student@skillbridge.dev",
+      password_hash: hashPassword("password123", "salt_student_dev"),
+      salt: "salt_student_dev",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Alex Learner",
+        role: "student",
+        sub: "00000000-0000-4000-a000-000000000004",
+        email: "student@skillbridge.dev",
+      },
     },
-  },
-  {
-    id: "00000000-0000-4000-a000-000000000005",
-    email: "teacher@skillbridge.dev",
-    password_hash: hashPassword("password123", "salt_teacher_dev"),
-    salt: "salt_teacher_dev",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Sarah Chen",
-      role: "teacher",
-      sub: "00000000-0000-4000-a000-000000000005",
+    {
+      id: "00000000-0000-4000-a000-000000000005",
       email: "teacher@skillbridge.dev",
+      password_hash: hashPassword("password123", "salt_teacher_dev"),
+      salt: "salt_teacher_dev",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Sarah Chen",
+        role: "teacher",
+        sub: "00000000-0000-4000-a000-000000000005",
+        email: "teacher@skillbridge.dev",
+      },
     },
-  },
-];
+  ];
 
 const INITIAL_USER_ROLES: LocalUserRole[] = [
   {
