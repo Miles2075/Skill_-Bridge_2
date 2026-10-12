@@ -19,10 +19,10 @@ function parseUserContext(req: Request): UserContext {
   const authHeader = req.headers.get("authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-  let userId = req.headers.get("x-user-id");
-  let email = req.headers.get("x-user-email");
-  let name = req.headers.get("x-user-name");
-  let roleStr = req.headers.get("x-user-role");
+  let userId: string | null = null;
+  let email: string | null = null;
+  let name: string | null = null;
+  let roleStr: string | null = null;
 
   // Never treat a client-writable role cookie or x-user-* header as identity.
   // A session token must resolve to a server-side session before its user/role is used.
