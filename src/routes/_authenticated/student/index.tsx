@@ -1,3 +1,15 @@
+async function getCurrentLmsToken(): Promise<string> {
+  for (const key of ["sb-local-auth-token", "sb-csjygxumpnonfupobhih-auth-token", "skillbridge_local_auth_session"]) {
+    try {
+      const session = JSON.parse(localStorage.getItem(key) || "null");
+      if (session?.access_token) return session.access_token;
+    } catch {
+      // try next compatible session key
+    }
+  }
+  return "";
+}
+
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, useCallback } from "react";
@@ -264,14 +276,24 @@ function StudentDashboardPage() {
             razorpay_signature: string;
           }) => {
             try {
-              await verifyPayment({
-                data: {
+              const token = await getCurrentLmsToken();
+              const confirmation = await fetch("/api/lms/purchase-confirmed", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
                   courseId: c.id,
                   orderId: payment.razorpay_order_id,
                   paymentId: payment.razorpay_payment_id,
                   signature: payment.razorpay_signature,
-                },
+                }),
               });
+              const confirmed = await confirmation.json();
+              if (!confirmation.ok || !confirmed.ok) {
+                throw new Error(confirmed.error || "Payment confirmation failed.");
+              }
               const displayName =
                 (user.user_metadata?.["display_name"] as string | undefined) ||
                 user.email?.split("@")[0] ||

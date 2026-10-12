@@ -535,14 +535,36 @@ function useCommerceState(
           razorpay_signature: string;
         }) => {
           try {
-            await verify({
-              data: {
+            const sessionToken =
+              localStorage.getItem("skillbridge_token") ||
+              (() => {
+                for (const key of ["sb-local-auth-token", "sb-csjygxumpnonfupobhih-auth-token", "skillbridge_local_auth_session"]) {
+                  try {
+                    const session = JSON.parse(localStorage.getItem(key) || "null");
+                    if (session?.access_token) return session.access_token;
+                  } catch {
+                    // try next compatible session key
+                  }
+                }
+                return "";
+              })();
+            const confirmation = await fetch("/api/lms/purchase-confirmed", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+              },
+              body: JSON.stringify({
                 courseId: m.id,
                 orderId: r.razorpay_order_id,
                 paymentId: r.razorpay_payment_id,
                 signature: r.razorpay_signature,
-              },
+              }),
             });
+            const confirmed = await confirmation.json();
+            if (!confirmation.ok || !confirmed.ok) {
+              throw new Error(confirmed.error || "Payment confirmation failed.");
+            }
 
             // A verified payment must also create the LMS enrollment.
             // This is what makes the course appear in My Learning and unlocks its lessons.

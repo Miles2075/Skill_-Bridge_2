@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, CheckCircle2, Loader2, Users } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
-import { createCourseOrder, verifyCoursePayment } from "@/lib/payments.functions";
+import { createCourseOrder } from "@/lib/payments.functions";
 import {
   enrollInCourse,
   getMyEnrollments,
@@ -132,14 +132,24 @@ function BrowseCoursesPage() {
             razorpay_signature: string;
           }) => {
             try {
-              await verifyCoursePayment({
-                data: {
+              const sessionToken = await getLmsSessionToken();
+              const confirmation = await fetch("/api/lms/purchase-confirmed", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+                },
+                body: JSON.stringify({
                   courseId: course.id,
                   orderId: response.razorpay_order_id,
                   paymentId: response.razorpay_payment_id,
                   signature: response.razorpay_signature,
-                },
+                }),
               });
+              const confirmed = await confirmation.json();
+              if (!confirmation.ok || !confirmed.ok) {
+                throw new Error(confirmed.error || "Payment confirmation failed.");
+              }
               await enrollFreeCourse(course);
               setMessage(`Payment successful. You're enrolled in ${course.title}.`);
               resolve();

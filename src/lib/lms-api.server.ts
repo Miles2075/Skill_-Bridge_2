@@ -19,19 +19,13 @@ function parseUserContext(req: Request): UserContext {
   const authHeader = req.headers.get("authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-  let userId = req.headers.get("x-user-id");
-  let email = req.headers.get("x-user-email");
-  let name = req.headers.get("x-user-name");
-  let roleStr = req.headers.get("x-user-role");
+  let userId: string | null = null;
+  let email: string | null = null;
+  let name: string | null = null;
+  let roleStr: string | null = null;
 
-  // Also check cookie header as fallback for local LMS roles
-  const cookieHeader = req.headers.get("cookie") || "";
-  if (!roleStr && cookieHeader) {
-    const roleMatch = cookieHeader.match(/(?:^|;\s*)skillbridge_role=([^;]+)/);
-    if (roleMatch) {
-      roleStr = decodeURIComponent(roleMatch[1]);
-    }
-  }
+  // Never treat a client-writable role cookie or x-user-* header as identity.
+  // A session token must resolve to a server-side session before its user/role is used.
 
   if (token) {
     const validated = lmsDB.validateSession(token);
@@ -48,17 +42,6 @@ function parseUserContext(req: Request): UserContext {
           ? "teacher"
           : "student";
       roleStr = primaryRole;
-    } else if (token.split(".").length === 3) {
-      try {
-        const payloadStr = Buffer.from(token.split(".")[1]!, "base64url").toString("utf-8");
-        const payload = JSON.parse(payloadStr);
-        if (payload.sub && !userId) userId = payload.sub;
-        if (payload.email && !email) email = payload.email;
-        if (payload.user_metadata?.display_name && !name) name = payload.user_metadata.display_name;
-        if (payload.user_metadata?.role && !roleStr) roleStr = payload.user_metadata.role;
-      } catch {
-        // ignore
-      }
     }
   }
 
@@ -127,16 +110,21 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
   }
 
   try {
+  // The API is a server-side boundary: never trust client-supplied role headers.
+  // Signed internal sessions from the LMS store are resolved by parseUserContext;
+  // external JWT payloads are accepted only when an explicit trusted auth adapter
+  // has verified them before forwarding user headers.
     // AUTH: POST /api/lms/auth/login
     if (path === "auth/login" && method === "POST") {
       const body = await req.json();
-      const { email, password } = body;
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const password = typeof body.password === "string" ? body.password : "";
       if (!email || !password) return errorResponse("Email and password are required");
+      if (email.length > 254 || password.length > 128) return errorResponse("Invalid login credentials.", 400);
 
       const res = lmsDB.authenticateUser(email, password);
-      if (!res) {
-        return errorResponse("Invalid login credentials", 400);
-      }
+      if (!res) return errorResponse("Invalid email or password.", 401);
+      await lmsDB.flush();
       return jsonResponse({
         user: res.user,
         session: res.session,
@@ -147,32 +135,36 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
     // AUTH: POST /api/lms/auth/signup
     if (path === "auth/signup" && method === "POST") {
       const body = await req.json();
-      const { email, password, metadata } = body;
-      if (!email || !password) return errorResponse("Email and password are required");
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      const metadata = body.metadata && typeof body.metadata === "object" ? body.metadata : {};
+      const displayName = typeof metadata.display_name === "string"
+        ? metadata.display_name.trim().slice(0, 80)
+        : typeof metadata.name === "string"
+          ? metadata.name.trim().slice(0, 80)
+          : "";
+      const role = metadata.role === "teacher" ? "teacher" : "student";
 
-      const cleanEmail = email.trim().toLowerCase();
-      if (lmsDB.findUserByEmail(cleanEmail)) {
-        const authed = lmsDB.authenticateUser(cleanEmail, password);
-        if (authed) {
-          return jsonResponse({
-            user: authed.user,
-            session: authed.session,
-            roles: authed.roles,
-          });
-        }
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return errorResponse("Enter a valid email address.");
       }
+      if (password.length < 8 || password.length > 128) {
+        return errorResponse("Password must be between 8 and 128 characters.");
+      }
+      if (lmsDB.findUserByEmail(email)) return errorResponse("An account with this email already exists.", 409);
 
       const res = lmsDB.registerUser({
-        email: cleanEmail,
+        email,
         password,
-        name: metadata?.display_name || metadata?.name,
-        role: metadata?.role,
+        name: displayName || email.split("@")[0],
+        role,
       });
+      await lmsDB.flush();
       return jsonResponse({
         user: res.user,
         session: res.session,
         roles: res.roles,
-      });
+      }, 201);
     }
 
     // AUTH: PATCH /api/lms/profile
@@ -566,10 +558,78 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
       return jsonResponse({ roles });
     }
 
-    // GENERIC QUERY: POST /api/lms/query
+    // GENERIC QUERY compatibility adapter. Only allow tables and actions that
+    // callers actually need, and always scope private records to the current user.
     if (path === "query" && method === "POST") {
       const body = await req.json();
-      const result = lmsDB.queryTable(body.table, body);
+      const table = typeof body.table === "string" ? body.table : "";
+      const action = body.action;
+      if (!["select", "insert", "upsert", "update", "delete"].includes(action)) {
+        return errorResponse("Unsupported table action", 400);
+      }
+
+      const allowedTables = new Set([
+        "courses", "lessons", "enrollments", "lesson_progress", "assignments",
+        "submissions", "quizzes", "quiz_attempts", "certificates", "users",
+        "user_roles", "sessions", "purchases", "profiles",
+      ]);
+      if (!allowedTables.has(table)) return errorResponse("Table not allowed", 400);
+
+      const ownerColumnByTable: Record<string, string> = {
+        enrollments: "student_id",
+        lesson_progress: "student_id",
+        submissions: "student_id",
+        quiz_attempts: "student_id",
+        certificates: "student_id",
+        purchases: "user_id",
+        profiles: "id",
+        users: "id",
+        sessions: "user_id",
+        user_roles: "user_id",
+      };
+      const privateTable = Object.hasOwn(ownerColumnByTable, table);
+      if (privateTable && !user.userId) return errorResponse("Unauthorized", 401);
+      const isWrite = action !== "select";
+      if (isWrite && !user.userId) return errorResponse("Unauthorized", 401);
+
+      // Generic table APIs never mutate auth, role, purchase, enrollment, or
+      // teacher-owned course data. Those writes must go through typed endpoints.
+      const directWriteTables = new Set(["profiles", "lesson_progress"]);
+      if (isWrite && !directWriteTables.has(table)) {
+        return errorResponse("Use the dedicated API endpoint for this operation", 403);
+      }
+      if (isWrite && table === "lesson_progress" && !user.userId) {
+        return errorResponse("Unauthorized", 401);
+      }
+
+      const filters =
+        body.filters && typeof body.filters === "object" && !Array.isArray(body.filters)
+          ? { ...(body.filters as Record<string, unknown>) }
+          : undefined;
+      const scopedFilters: Record<string, unknown> = filters || {};
+      if (privateTable && user.userId) {
+        scopedFilters[ownerColumnByTable[table]!] = user.userId;
+      }
+
+      const values = body.values;
+      if (isWrite && (table === "profiles" || table === "lesson_progress") && values !== undefined) {
+        const rows = Array.isArray(values) ? values : [values];
+        for (const row of rows) {
+          if (!row || typeof row !== "object") return errorResponse("Invalid payload", 400);
+          const record = row as Record<string, unknown>;
+          const ownerColumn = table === "profiles" ? "id" : "student_id";
+          if (record[ownerColumn] !== undefined && record[ownerColumn] !== user.userId) {
+            return errorResponse("You can only modify your own records", 403);
+          }
+          if (table === "lesson_progress") record["student_id"] = user.userId;
+          if (table === "profiles") record["id"] = user.userId;
+        }
+      }
+
+      const result = lmsDB.queryTable(table, {
+        ...body,
+        filters: Object.keys(scopedFilters).length ? scopedFilters : undefined,
+      });
       return jsonResponse(result);
     }
     // GET /api/lms/courses
@@ -616,6 +676,158 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
         user.email || body.studentEmail || "student@example.com",
       );
       return jsonResponse({ enrollment });
+    }
+
+    // GET /api/lms/my-purchases
+    if (path === "my-purchases" && method === "GET") {
+      if (!user.userId) return errorResponse("Unauthorized", 401);
+      const purchases = lmsDB.getPurchasesForUser(user.userId);
+      return jsonResponse({ purchases, courseIds: purchases.map((purchase) => purchase.course_id) });
+    }
+
+    // POST /api/lms/purchase-confirmed
+    // Independently verify the Razorpay signature and captured payment before enrollment.
+    if (path === "purchase-confirmed" && method === "POST") {
+      if (!user.userId) return errorResponse("Sign in before purchasing a course.", 401);
+      const body = await req.json().catch(() => ({}));
+      const courseId = typeof body.courseId === "string" ? body.courseId : "";
+      const orderId = typeof body.orderId === "string" ? body.orderId : "";
+      const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
+      const signature = typeof body.signature === "string" ? body.signature : "";
+      if (!courseId || !orderId || !paymentId || !signature) {
+        return errorResponse("Course and payment details are required.");
+      }
+
+      const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+      const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+      if (!keyId || !keySecret) return errorResponse("Payments are not configured.", 503);
+      const course = lmsDB.getCourse(courseId);
+      if (!course || course.status !== "published") return errorResponse("Course not found or unavailable.", 404);
+
+      const expected = crypto.createHmac("sha256", keySecret).update(`${orderId}|${paymentId}`).digest("hex");
+      const supplied = Buffer.from(signature, "utf8");
+      const expectedBuffer = Buffer.from(expected, "utf8");
+      if (supplied.length !== expectedBuffer.length || !crypto.timingSafeEqual(supplied, expectedBuffer)) {
+        return errorResponse("Payment signature verification failed.", 400);
+      }
+
+      const auth = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
+      const [orderResponse, paymentResponse] = await Promise.all([
+        fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(orderId)}`, { headers: { Authorization: auth } }),
+        fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`, { headers: { Authorization: auth } }),
+      ]);
+      if (!orderResponse.ok || !paymentResponse.ok) {
+        return errorResponse("Could not verify payment with Razorpay.", 502);
+      }
+      const order = await orderResponse.json() as {
+        id?: string; amount?: number; currency?: string; notes?: { course_id?: string; course_slug?: string };
+      };
+      const payment = await paymentResponse.json() as {
+        id?: string; order_id?: string; amount?: number; currency?: string; status?: string;
+      };
+      if (order.id !== orderId || payment.id !== paymentId || payment.order_id !== orderId) {
+        return errorResponse("Payment identifiers do not match.", 400);
+      }
+      if (order.amount !== course.price_inr * 100 || payment.amount !== order.amount ||
+          order.currency !== "INR" || payment.currency !== "INR") {
+        return errorResponse("Paid amount does not match this course.", 400);
+      }
+      if (order.notes?.course_id !== course.id && order.notes?.course_id !== course.slug &&
+          order.notes?.course_slug !== course.slug) {
+        return errorResponse("Payment was not created for this course.", 400);
+      }
+      if (payment.status !== "captured") return errorResponse("Payment has not been captured.", 402);
+
+      const purchase = lmsDB.recordPurchase({
+        id: `purchase_${paymentId}`,
+        user_id: user.userId,
+        course_id: course.id,
+        amount_inr: course.price_inr,
+        razorpay_order_id: orderId,
+        razorpay_payment_id: paymentId,
+      });
+      const enrollment = lmsDB.enrollStudent(user.userId, course.id, user.name || "Learner", user.email || "");
+      await lmsDB.flush();
+      return jsonResponse({ ok: true, purchase, enrollment });
+    }
+
+    // POST /api/lms/purchase-confirmed
+    // Used after client payment UI completes. This route independently fetches the
+    // Razorpay order and payment and validates the signature, amount, course, and
+    // authenticated owner before granting access.
+    if (path === "purchase-confirmed" && method === "POST") {
+      if (!user.userId) return errorResponse("Sign in before purchasing a course.", 401);
+      const body = await req.json().catch(() => ({}));
+      const courseId = typeof body.courseId === "string" ? body.courseId : "";
+      const orderId = typeof body.orderId === "string" ? body.orderId : "";
+      const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
+      const signature = typeof body.signature === "string" ? body.signature : "";
+      if (!courseId || !orderId || !paymentId || !signature) {
+        return errorResponse("Course and payment details are required.");
+      }
+
+      const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+      const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+      if (!keyId || !keySecret) return errorResponse("Payments are not configured.", 503);
+      const course = lmsDB.getCourse(courseId);
+      if (!course) return errorResponse("Course not found.", 404);
+
+      const crypto = await import("crypto");
+      const expected = crypto.createHmac("sha256", keySecret).update(`${orderId}|${paymentId}`).digest("hex");
+      const a = Buffer.from(expected, "utf8");
+      const b = Buffer.from(signature, "utf8");
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return errorResponse("Payment signature verification failed.", 400);
+      }
+
+      const basic = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+      const [orderResponse, paymentResponse] = await Promise.all([
+        fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(orderId)}`, {
+          headers: { Authorization: `Basic ${basic}` },
+        }),
+        fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+          headers: { Authorization: `Basic ${basic}` },
+        }),
+      ]);
+      if (!orderResponse.ok || !paymentResponse.ok) {
+        return errorResponse("Could not verify payment with Razorpay.", 502);
+      }
+      const order = await orderResponse.json() as { id?: string; amount?: number; currency?: string; notes?: { course_id?: string } };
+      const payment = await paymentResponse.json() as { id?: string; order_id?: string; amount?: number; currency?: string; status?: string };
+      if (order.id !== orderId || payment.id !== paymentId || payment.order_id !== orderId) {
+        return errorResponse("Payment identifiers do not match.", 400);
+      }
+      if (order.amount !== course.price_inr * 100 || payment.amount !== order.amount ||
+          order.currency !== "INR" || payment.currency !== "INR") {
+        return errorResponse("Paid amount does not match this course.", 400);
+      }
+      if (order.notes?.course_id !== course.id && order.notes?.course_id !== course.slug) {
+        return errorResponse("Payment was not created for this course.", 400);
+      }
+      if (payment.status !== "captured") {
+        return errorResponse("Payment has not been captured.", 402);
+      }
+
+      const purchaseResult = lmsDB.queryTable("purchases", {
+        action: "upsert",
+        onConflict: "razorpay_payment_id",
+        values: {
+          id: `purchase_${paymentId}`,
+          user_id: user.userId,
+          course_id: course.id,
+          amount_inr: course.price_inr,
+          razorpay_order_id: orderId,
+          razorpay_payment_id: paymentId,
+        },
+      });
+      const enrollment = lmsDB.enrollStudent(
+        user.userId,
+        course.id,
+        user.name || "Learner",
+        user.email || "",
+      );
+      await lmsDB.flush();
+      return jsonResponse({ ok: true, purchase: purchaseResult.data, enrollment });
     }
 
     // POST /api/lms/complete-lesson

@@ -215,7 +215,8 @@ export interface LMSDatabase {
 }
 
 export function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  // 210,000 iterations follows current OWASP guidance for PBKDF2-HMAC-SHA512.
+  return crypto.pbkdf2Sync(password, salt, 210_000, 64, "sha512").toString("hex");
 }
 
 const DB_DIR = path.resolve(process.cwd(), "data");
@@ -664,80 +665,84 @@ const INITIAL_QUIZZES: Quiz[] = [
   },
 ];
 
-const INITIAL_USERS: LocalUser[] = [
-  {
-    id: "00000000-0000-4000-a000-000000000001",
-    email: "student@skillbridge.edu",
-    password_hash: hashPassword("password123", "salt_student_01"),
-    salt: "salt_student_01",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Alex Learner",
-      role: "student",
-      sub: "00000000-0000-4000-a000-000000000001",
+// No shared demo accounts are created in production. Create actual accounts
+// through /api/lms/auth/signup; local demo data is not a safe production identity.
+const INITIAL_USERS: LocalUser[] = process.env.NODE_ENV === "production" || process.env.VERCEL
+  ? []
+  : [
+    {
+      id: "00000000-0000-4000-a000-000000000001",
       email: "student@skillbridge.edu",
+      password_hash: hashPassword("password123", "salt_student_01"),
+      salt: "salt_student_01",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Alex Learner",
+        role: "student",
+        sub: "00000000-0000-4000-a000-000000000001",
+        email: "student@skillbridge.edu",
+      },
     },
-  },
-  {
-    id: "8d95e694-3d47-422e-a017-86a1a0ee1251",
-    email: "instructor@skillbridge.edu",
-    password_hash: hashPassword("password123", "salt_teacher_01"),
-    salt: "salt_teacher_01",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Sarah Chen",
-      role: "teacher",
-      sub: "8d95e694-3d47-422e-a017-86a1a0ee1251",
+    {
+      id: "8d95e694-3d47-422e-a017-86a1a0ee1251",
       email: "instructor@skillbridge.edu",
+      password_hash: hashPassword("password123", "salt_teacher_01"),
+      salt: "salt_teacher_01",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Sarah Chen",
+        role: "teacher",
+        sub: "8d95e694-3d47-422e-a017-86a1a0ee1251",
+        email: "instructor@skillbridge.edu",
+      },
     },
-  },
-  {
-    id: "00000000-0000-4000-a000-000000000003",
-    email: "admin@skillbridge.edu",
-    password_hash: hashPassword("password123", "salt_admin_01"),
-    salt: "salt_admin_01",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Skillbridge Admin",
-      role: "admin",
-      sub: "00000000-0000-4000-a000-000000000003",
+    {
+      id: "00000000-0000-4000-a000-000000000003",
       email: "admin@skillbridge.edu",
+      password_hash: hashPassword("password123", "salt_admin_01"),
+      salt: "salt_admin_01",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Skillbridge Admin",
+        role: "admin",
+        sub: "00000000-0000-4000-a000-000000000003",
+        email: "admin@skillbridge.edu",
+      },
     },
-  },
-  {
-    id: "00000000-0000-4000-a000-000000000004",
-    email: "student@skillbridge.dev",
-    password_hash: hashPassword("password123", "salt_student_dev"),
-    salt: "salt_student_dev",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Alex Learner",
-      role: "student",
-      sub: "00000000-0000-4000-a000-000000000004",
+    {
+      id: "00000000-0000-4000-a000-000000000004",
       email: "student@skillbridge.dev",
+      password_hash: hashPassword("password123", "salt_student_dev"),
+      salt: "salt_student_dev",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Alex Learner",
+        role: "student",
+        sub: "00000000-0000-4000-a000-000000000004",
+        email: "student@skillbridge.dev",
+      },
     },
-  },
-  {
-    id: "00000000-0000-4000-a000-000000000005",
-    email: "teacher@skillbridge.dev",
-    password_hash: hashPassword("password123", "salt_teacher_dev"),
-    salt: "salt_teacher_dev",
-    created_at: "2026-09-01T00:00:00.000Z",
-    updated_at: "2026-09-01T00:00:00.000Z",
-    user_metadata: {
-      display_name: "Sarah Chen",
-      role: "teacher",
-      sub: "00000000-0000-4000-a000-000000000005",
+    {
+      id: "00000000-0000-4000-a000-000000000005",
       email: "teacher@skillbridge.dev",
+      password_hash: hashPassword("password123", "salt_teacher_dev"),
+      salt: "salt_teacher_dev",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      user_metadata: {
+        display_name: "Sarah Chen",
+        role: "teacher",
+        sub: "00000000-0000-4000-a000-000000000005",
+        email: "teacher@skillbridge.dev",
+      },
     },
-  },
-];
+  ];
 
-const INITIAL_USER_ROLES: LocalUserRole[] = [
+const INITIAL_USER_ROLES: LocalUserRole[] = process.env.NODE_ENV === "production" || process.env.VERCEL ? [] : [
   {
     id: "ur-1",
     user_id: "00000000-0000-4000-a000-000000000001",
@@ -770,7 +775,7 @@ const INITIAL_USER_ROLES: LocalUserRole[] = [
   },
 ];
 
-const INITIAL_PROFILES: LocalProfile[] = [
+const INITIAL_PROFILES: LocalProfile[] = process.env.NODE_ENV === "production" || process.env.VERCEL ? [] : [
   {
     id: "00000000-0000-4000-a000-000000000001",
     display_name: "Alex Learner",
@@ -848,6 +853,10 @@ class DatabaseManager {
 
   async ready(): Promise<void> {
     if (!this.remoteSql) {
+      // Local JSON persistence is intended for development only.
+      if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+        throw new Error("DATABASE_URL is required for production LMS persistence.");
+      }
       this.read();
       return;
     }
@@ -906,11 +915,15 @@ class DatabaseManager {
 
   async flush(): Promise<void> {
     if (!this.remoteSql || !this.db || !this.dirty) return;
+
+    // Use an upsert instead of UPDATE-only. It also recovers safely if the
+    // Neon state row is removed while the app is running.
+    const snapshot = JSON.stringify(this.db);
     await this.remoteSql`
-      UPDATE skillbridge_lms_state
-      SET data = ${JSON.stringify(this.db)}::jsonb,
-          updated_at = NOW()
-      WHERE id = 'primary'
+      INSERT INTO skillbridge_lms_state (id, data, updated_at)
+      VALUES ('primary', ${snapshot}::jsonb, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
     `;
     this.dirty = false;
   }
@@ -963,11 +976,11 @@ class DatabaseManager {
 
   private ensureSchemaIntegrity(db: LMSDatabase) {
     let changed = false;
-    if (!db.users || db.users.length === 0) {
+    if (!db.users) {
       db.users = [...INITIAL_USERS];
       changed = true;
     }
-    if (!db.user_roles || db.user_roles.length === 0) {
+    if (!db.user_roles) {
       db.user_roles = [...INITIAL_USER_ROLES];
       changed = true;
     }
@@ -979,7 +992,7 @@ class DatabaseManager {
       db.purchases = [];
       changed = true;
     }
-    if (!db.profiles || db.profiles.length === 0) {
+    if (!db.profiles) {
       db.profiles = [...INITIAL_PROFILES];
       changed = true;
     }
@@ -2045,28 +2058,10 @@ class DatabaseManager {
     const db = this.read();
     const cleanEmail = email.trim().toLowerCase();
     const user = this.findUserByEmail(cleanEmail);
-    if (!user) {
-      const role =
-        cleanEmail.includes("teach") ||
-        cleanEmail.includes("instructor") ||
-        cleanEmail.includes("faculty")
-          ? "teacher"
-          : "student";
-      const registered = this.registerUser({
-        email: cleanEmail,
-        password,
-        name: cleanEmail.split("@")[0],
-        role,
-      });
-      return { user: registered.user, session: registered.session, roles: registered.roles };
-    }
+    if (!user) return null;
 
     const hash = hashPassword(password, user.salt);
-    if (hash !== user.password_hash) {
-      user.password_hash = hash;
-      user.updated_at = new Date().toISOString();
-      this.write();
-    }
+    if (hash !== user.password_hash) return null;
 
     const session = this.createSession(user.id);
     const roles = this.getUserRoles(user.id);
@@ -2095,30 +2090,10 @@ class DatabaseManager {
     if (!token) return null;
     const db = this.read();
 
-    if (token.startsWith("eyJ") && token.split(".").length === 3) {
-      try {
-        const payloadStr = Buffer.from(token.split(".")[1]!, "base64url").toString("utf-8");
-        const payload = JSON.parse(payloadStr);
-        if (payload.sub) {
-          const user = this.findUserById(payload.sub) || this.findUserByEmail(payload.email || "");
-          if (user) {
-            return {
-              user,
-              session: {
-                id: payload.session_id || "sess_jwt",
-                user_id: user.id,
-                token,
-                expires_at: new Date(Date.now() + 86400000).toISOString(),
-                created_at: new Date().toISOString(),
-              },
-              roles: this.getUserRoles(user.id),
-            };
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
+    // External/JWT sessions are only accepted when the signature is verifiable.
+    // In the local LMS session format, opaque random tokens below are the
+    // authoritative production session mechanism.
+
 
     const session = db.sessions.find((s) => s.token === token);
     if (!session) return null;
@@ -2152,7 +2127,36 @@ class DatabaseManager {
     return ["student"];
   }
 
-  // QUERY TABLE - Generic local table operations
+  recordPurchase(purchase: Omit<LocalPurchase, "id" | "created_at"> & { id?: string }): LocalPurchase {
+    const db = this.read();
+    const existing = db.purchases.find(
+      (item) =>
+        item.razorpay_payment_id === purchase.razorpay_payment_id ||
+        (item.user_id === purchase.user_id && item.course_id === purchase.course_id),
+    );
+    if (existing) return existing;
+
+    const saved: LocalPurchase = {
+      id: purchase.id || crypto.randomUUID(),
+      user_id: purchase.user_id,
+      course_id: purchase.course_id,
+      amount_inr: purchase.amount_inr,
+      razorpay_order_id: purchase.razorpay_order_id,
+      razorpay_payment_id: purchase.razorpay_payment_id,
+      created_at: new Date().toISOString(),
+    };
+    db.purchases.push(saved);
+    this.write();
+    return saved;
+  }
+
+  getPurchasesForUser(userId: string): LocalPurchase[] {
+    const db = this.read();
+    return db.purchases.filter((purchase) => purchase.user_id === userId);
+  }
+
+  // QUERY TABLE - Generic table operations. API-level authorization is applied
+  // before this method is called; never expose arbitrary writes to anonymous users.
   queryTable(
     table: string,
     query: {
