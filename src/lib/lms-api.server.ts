@@ -24,14 +24,8 @@ function parseUserContext(req: Request): UserContext {
   let name = req.headers.get("x-user-name");
   let roleStr = req.headers.get("x-user-role");
 
-  // Also check cookie header as fallback for local LMS roles
-  const cookieHeader = req.headers.get("cookie") || "";
-  if (!roleStr && cookieHeader) {
-    const roleMatch = cookieHeader.match(/(?:^|;\s*)skillbridge_role=([^;]+)/);
-    if (roleMatch) {
-      roleStr = decodeURIComponent(roleMatch[1]);
-    }
-  }
+  // Never treat a client-writable role cookie or x-user-* header as identity.
+  // A session token must resolve to a server-side session before its user/role is used.
 
   if (token) {
     const validated = lmsDB.validateSession(token);
@@ -48,17 +42,6 @@ function parseUserContext(req: Request): UserContext {
           ? "teacher"
           : "student";
       roleStr = primaryRole;
-    } else if (token.split(".").length === 3) {
-      try {
-        const payloadStr = Buffer.from(token.split(".")[1]!, "base64url").toString("utf-8");
-        const payload = JSON.parse(payloadStr);
-        if (payload.sub && !userId) userId = payload.sub;
-        if (payload.email && !email) email = payload.email;
-        if (payload.user_metadata?.display_name && !name) name = payload.user_metadata.display_name;
-        if (payload.user_metadata?.role && !roleStr) roleStr = payload.user_metadata.role;
-      } catch {
-        // ignore
-      }
     }
   }
 
