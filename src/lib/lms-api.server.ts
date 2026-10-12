@@ -134,32 +134,36 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
     // AUTH: POST /api/lms/auth/signup
     if (path === "auth/signup" && method === "POST") {
       const body = await req.json();
-      const { email, password, metadata } = body;
-      if (!email || !password) return errorResponse("Email and password are required");
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      const metadata = body.metadata && typeof body.metadata === "object" ? body.metadata : {};
+      const displayName = typeof metadata.display_name === "string"
+        ? metadata.display_name.trim().slice(0, 80)
+        : typeof metadata.name === "string"
+          ? metadata.name.trim().slice(0, 80)
+          : "";
+      const role = metadata.role === "teacher" ? "teacher" : "student";
 
-      const cleanEmail = email.trim().toLowerCase();
-      if (lmsDB.findUserByEmail(cleanEmail)) {
-        const authed = lmsDB.authenticateUser(cleanEmail, password);
-        if (authed) {
-          return jsonResponse({
-            user: authed.user,
-            session: authed.session,
-            roles: authed.roles,
-          });
-        }
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return errorResponse("Enter a valid email address.");
       }
+      if (password.length < 8 || password.length > 128) {
+        return errorResponse("Password must be between 8 and 128 characters.");
+      }
+      if (lmsDB.findUserByEmail(email)) return errorResponse("An account with this email already exists.", 409);
 
       const res = lmsDB.registerUser({
-        email: cleanEmail,
+        email,
         password,
-        name: metadata?.display_name || metadata?.name,
-        role: metadata?.role,
+        name: displayName || email.split("@")[0],
+        role,
       });
+      await lmsDB.flush();
       return jsonResponse({
         user: res.user,
         session: res.session,
         roles: res.roles,
-      });
+      }, 201);
     }
 
     // AUTH: PATCH /api/lms/profile
