@@ -2156,6 +2156,29 @@ class DatabaseManager {
     return ["student"];
   }
 
+  recordPurchase(purchase: Omit<LocalPurchase, "id" | "created_at"> & { id?: string }): LocalPurchase {
+    const db = this.read();
+    const existing = db.purchases.find(
+      (item) =>
+        item.razorpay_payment_id === purchase.razorpay_payment_id ||
+        (item.user_id === purchase.user_id && item.course_id === purchase.course_id),
+    );
+    if (existing) return existing;
+
+    const saved: LocalPurchase = {
+      id: purchase.id || crypto.randomUUID(),
+      user_id: purchase.user_id,
+      course_id: purchase.course_id,
+      amount_inr: purchase.amount_inr,
+      razorpay_order_id: purchase.razorpay_order_id,
+      razorpay_payment_id: purchase.razorpay_payment_id,
+      created_at: new Date().toISOString(),
+    };
+    db.purchases.push(saved);
+    this.write();
+    return saved;
+  }
+
   getPurchasesForUser(userId: string): LocalPurchase[] {
     const db = this.read();
     return db.purchases.filter((purchase) => purchase.user_id === userId);
