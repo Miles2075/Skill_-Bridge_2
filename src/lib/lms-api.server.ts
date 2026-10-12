@@ -690,6 +690,13 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
       return jsonResponse({ enrollment });
     }
 
+    // GET /api/lms/my-purchases
+    if (path === "my-purchases" && method === "GET") {
+      if (!user.userId) return errorResponse("Unauthorized", 401);
+      const purchases = lmsDB.getPurchasesForUser(user.userId);
+      return jsonResponse({ purchases, courseIds: purchases.map((purchase) => purchase.course_id) });
+    }
+
     // POST /api/lms/purchase-confirmed
     // Used after client payment UI completes. This route independently fetches the
     // Razorpay order and payment and validates the signature, amount, course, and
