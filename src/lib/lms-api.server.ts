@@ -117,13 +117,14 @@ async function handleLmsApiRequestInternal(req: Request): Promise<Response | nul
     // AUTH: POST /api/lms/auth/login
     if (path === "auth/login" && method === "POST") {
       const body = await req.json();
-      const { email, password } = body;
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const password = typeof body.password === "string" ? body.password : "";
       if (!email || !password) return errorResponse("Email and password are required");
+      if (email.length > 254 || password.length > 128) return errorResponse("Invalid login credentials.", 400);
 
       const res = lmsDB.authenticateUser(email, password);
-      if (!res) {
-        return errorResponse("Invalid login credentials", 400);
-      }
+      if (!res) return errorResponse("Invalid email or password.", 401);
+      await lmsDB.flush();
       return jsonResponse({
         user: res.user,
         session: res.session,
