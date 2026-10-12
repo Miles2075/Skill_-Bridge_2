@@ -906,11 +906,15 @@ class DatabaseManager {
 
   async flush(): Promise<void> {
     if (!this.remoteSql || !this.db || !this.dirty) return;
+
+    // Use an upsert instead of UPDATE-only. It also recovers safely if the
+    // Neon state row is removed while the app is running.
+    const snapshot = JSON.stringify(this.db);
     await this.remoteSql`
-      UPDATE skillbridge_lms_state
-      SET data = ${JSON.stringify(this.db)}::jsonb,
-          updated_at = NOW()
-      WHERE id = 'primary'
+      INSERT INTO skillbridge_lms_state (id, data, updated_at)
+      VALUES ('primary', ${snapshot}::jsonb, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
     `;
     this.dirty = false;
   }
@@ -2152,7 +2156,8 @@ class DatabaseManager {
     return ["student"];
   }
 
-  // QUERY TABLE - Generic local table operations
+  // QUERY TABLE - Generic table operations. API-level authorization is applied
+  // before this method is called; never expose arbitrary writes to anonymous users.
   queryTable(
     table: string,
     query: {
