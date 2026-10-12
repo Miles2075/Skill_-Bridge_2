@@ -2156,6 +2156,11 @@ class DatabaseManager {
     return ["student"];
   }
 
+  getPurchasesForUser(userId: string): LocalPurchase[] {
+    const db = this.read();
+    return db.purchases.filter((purchase) => purchase.user_id === userId);
+  }
+
   // QUERY TABLE - Generic table operations. API-level authorization is applied
   // before this method is called; never expose arbitrary writes to anonymous users.
   queryTable(
